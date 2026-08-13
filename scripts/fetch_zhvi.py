@@ -23,7 +23,7 @@ def load_dim_metro(df_melt, engine):
     if existing_count == 0:
         metros.to_sql("dim_metro", engine, if_exists="append", index=False)
     else:
-        print(f"dim_metro už obsahuje {existing_count} riadkov, preskakujem zápis")
+        print(f"dim_metro has already {existing_count} rows")
 
 def load_fact_home_values(df_melt, engine):
     dim_metro_db = pd.read_sql("SELECT metro_id, zillow_region_name FROM dim_metro", engine)
@@ -34,7 +34,7 @@ def load_fact_home_values(df_melt, engine):
     if existing_facts == 0:
         to_upload.to_sql("fact_home_values", engine, if_exists="append", index=False)
     else:
-        print(f"fact_home_values už obsahuje {existing_facts} riadkov, preskakujem zápis")
+        print(f"fact_home_values already has {existing_facts} rows")
 
 if __name__ == "__main__":
       engine = get_engine()

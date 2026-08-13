@@ -36,7 +36,7 @@ def load_fact_macro(macro_final, engine):
     if existing == 0:
         macro_final.to_sql("fact_macro", engine, if_exists="append", index=False)
     else:
-        print(f"fact_macro už obsahuje {existing} riadkov, preskakujem zápis")
+        print(f"fact_macro already has {existing} rows")
     
 if __name__ == "__main__":
     engine = get_engine()
