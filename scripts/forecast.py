@@ -4,14 +4,41 @@ from db import get_engine
 from xgboost import XGBRegressor
 from sklearn.metrics import mean_absolute_percentage_error, mean_absolute_error
 
-LAG_WINDOWS = [1,3,6,12]
+LAG_WINDOWS = [1, 3, 6, 12]
 FEATURES = ["metro_id"] + [f"lag_{w}" for w in LAG_WINDOWS] + ["month"]
 FORECAST_HORIZON_MONTHS = 12
-TEST_WINDOWS_MONTHS = 12
+TEST_WINDOW_MONTHS = 12
+MODEL_VERSION = "xgb_v1"
+
 
 def prepare_data(engine):
-    price_history = pd.read_sql("SELECT metro_id, date, zhvi_value FROM fact_home_values WHERE home_type = 'all_homes' ORDER BY metro_id, date", engine)
+    """Load ZHVI price history and engineer features for the forecast model.
 
+    The model predicts month-over-month percent change (pct_change), not
+    the raw price. Tree models like XGBoost can't extrapolate beyond the
+    value range seen in training, and ZHVI only ever grows, so a price
+    target would eventually fall outside that range. pct_change and the
+    lag features built from it stay in a stable, recurring range instead.
+
+    Inputs are limited to the metro's own price history (lag features)
+    and calendar month. Anything that itself requires a future forecast
+    (mortgage rate, Case-Shiller) is excluded to avoid feature leakage:
+    at prediction time, next month's macro values don't exist yet.
+
+    Returns:
+        price_history: full history with lag features, used for training.
+        recent_history: each metro's most recent FORECAST_HORIZON_MONTHS
+            rows, used as the starting point for recursive_forecast.
+    """
+    price_history = pd.read_sql(
+        "SELECT metro_id, date, zhvi_value FROM fact_home_values "
+        "WHERE home_type = 'all_homes' ORDER BY metro_id, date",
+        engine,
+    )
+
+    # groupby prevents pct_change/shift from crossing metro boundaries -
+    # without it, the first row of metro B would compute its change
+    # against the last row of metro A.
     price_history["pct_change"] = price_history.groupby("metro_id")["zhvi_value"].pct_change()
     price_history["date"] = pd.to_datetime(price_history["date"])
     price_history = price_history.dropna(subset=["pct_change"])
@@ -23,93 +50,124 @@ def prepare_data(engine):
 
     price_history["month"] = price_history["date"].dt.month
     price_history = price_history.dropna(subset=[f"lag_{w}" for w in LAG_WINDOWS])
-    
+
     return price_history, recent_history
 
-def train_and_evaluate(df):
-    cutoff_date = df["date"].max() - pd.DateOffset(months=TEST_WINDOWS_MONTHS)
-    train = df[df["date"] <= cutoff_date]
-    test = df[df["date"] > cutoff_date]
 
-    X_train = train[FEATURES]
-    y_train = train["pct_change"]
+def train_and_evaluate(price_history):
+    """Train on all but the last TEST_WINDOW_MONTHS, then report MAE/MAPE
+    against two baselines to check the model adds real value.
 
-    X_test = test[FEATURES]
-    y_test = test["pct_change"]
+    Split is chronological, not random: a random split would let the
+    model train on rows chronologically after ones it's tested on -
+    the same future-leakage problem the feature choice avoids.
+
+    MAPE is reported for reference but is unreliable here since
+    pct_change often sits near zero, making its percentage blow up;
+    MAE is the metric that actually matters.
+    """
+    cutoff_date = price_history["date"].max() - pd.DateOffset(months=TEST_WINDOW_MONTHS)
+    train = price_history[price_history["date"] <= cutoff_date]
+    test = price_history[price_history["date"] > cutoff_date]
+
+    X_train, y_train = train[FEATURES], train["pct_change"]
+    X_test, y_test = test[FEATURES], test["pct_change"]
 
     model = XGBRegressor(n_estimators=100, max_depth=4, learning_rate=0.1, random_state=42)
     model.fit(X_train, y_train)
 
     predictions = model.predict(X_test)
-    mape = mean_absolute_percentage_error(y_test, predictions)
-    mae = mean_absolute_error(y_test, predictions)
-    print(f"MAPE: {mape:.4f}")
-    print(f"MAE: {mae:.5f}")
+    print(f"MAPE: {mean_absolute_percentage_error(y_test, predictions):.4f}")
+    print(f"MAE: {mean_absolute_error(y_test, predictions):.5f}")
 
     baseline_zero = mean_absolute_error(y_test, np.zeros(len(y_test)))
     print(f"Baseline (always 0): {baseline_zero:.5f}")
 
+    # Naive baseline: predict last month's change repeats. Prices have
+    # strong momentum, so this is a genuinely hard baseline to beat -
+    # a small improvement over it is a real, honest result.
     baseline_naive = mean_absolute_error(y_test, X_test["lag_1"])
     print(f"Baseline (same as month before): {baseline_naive:.5f}")
 
+
 def train_final_model(price_history):
-    X_full = price_history[FEATURES]
-    y_full = price_history["pct_change"]
+    """Retrain on the full history (train+test) for the production model
+    used in recursive_forecast, now that train_and_evaluate has already
+    given an honest read on out-of-sample performance."""
+    X_full, y_full = price_history[FEATURES], price_history["pct_change"]
 
     final_model = XGBRegressor(n_estimators=100, max_depth=4, learning_rate=0.1, random_state=42)
     final_model.fit(X_full, y_full)
-    
+
     return final_model
 
+
 def recursive_forecast(model, recent_history):
-    predicted_prices = []
-    for metro_id in recent_history['metro_id'].unique():
-        sub = recent_history[recent_history["metro_id"] == metro_id]
-        sub = sub.sort_values("date")
+    """Predict ZHVI FORECAST_HORIZON_MONTHS ahead for every metro.
 
-        history = sub["pct_change"].tolist()
+    The model predicts one month at a time. Each month's predicted
+    pct_change is appended to that metro's history and becomes the lag
+    input for the next month - the model's own prior prediction feeds
+    the next step, hence "recursive". Predicted prices are built up from
+    the last known real price by compounding each step's predicted change.
+    """
+    forecast_rows = []
+    for metro_id in recent_history["metro_id"].unique():
+        metro_history = recent_history[recent_history["metro_id"] == metro_id].sort_values("date")
 
-        last_value = sub["zhvi_value"].iloc[-1]
-        last_date = sub["date"].iloc[-1]
-        
-        
-        for _ in range(1,FORECAST_HORIZON_MONTHS+1):
+        change_history = metro_history["pct_change"].tolist()
+        last_price = metro_history["zhvi_value"].iloc[-1]
+        last_date = metro_history["date"].iloc[-1]
+
+        for _ in range(FORECAST_HORIZON_MONTHS):
             target_date = last_date + pd.offsets.MonthEnd(1)
-            month = target_date.month
-            
-            lag_1 = history[-1]
-            lag_3 = history[-3]
-            lag_6 = history[-6]
-            lag_12 = history[-12]
 
-            values = [metro_id, lag_1, lag_3, lag_6, lag_12, month]
-            row = pd.DataFrame([values], columns=FEATURES)
-            rate = model.predict(row)[0]
-            
-            predicted_value = (1 + rate) * last_value
-            
-            history.append(rate)
-            last_value = predicted_value
+            feature_values = [
+                metro_id,
+                change_history[-1],
+                change_history[-3],
+                change_history[-6],
+                change_history[-12],
+                target_date.month,
+            ]
+            feature_row = pd.DataFrame([feature_values], columns=FEATURES)
+            predicted_change = model.predict(feature_row)[0]
+
+            predicted_price = last_price * (1 + predicted_change)
+
+            change_history.append(predicted_change)
+            last_price = predicted_price
             last_date = target_date
-            
-            predicted_prices.append((metro_id, target_date, predicted_value))
-            
-    results_df = pd.DataFrame(predicted_prices, columns=["metro_id", "forecast_date", "predicted_zhvi"])
-    results_df["model_version"] = "xgb_v1"
-    
-    return results_df
 
-def load_fact_forecast(results_df, engine):
-    existing = pd.read_sql("SELECT COUNT(*) FROM fact_forecast", engine).iloc[0,0]
+            forecast_rows.append((metro_id, target_date, predicted_price))
+
+    forecast_df = pd.DataFrame(
+        forecast_rows, columns=["metro_id", "forecast_date", "predicted_zhvi"]
+    )
+    forecast_df["model_version"] = MODEL_VERSION
+
+    return forecast_df
+
+
+def load_fact_forecast(forecast_df, engine):
+    """Write the forecast to fact_forecast, once.
+
+    NOTE: this guard writes only on a fully empty table, so it won't
+    refresh the forecast on a second run. Revisit this when the monthly
+    automation is built - likely via model_version instead of a row-count
+    guard, so each run's forecast is distinguishable.
+    """
+    existing = pd.read_sql("SELECT COUNT(*) FROM fact_forecast", engine).iloc[0, 0]
     if existing == 0:
-        results_df.to_sql("fact_forecast", engine, if_exists="append", index=False)
+        forecast_df.to_sql("fact_forecast", engine, if_exists="append", index=False)
     else:
         print(f"fact_forecast already has {existing} rows")
-    
+
+
 if __name__ == "__main__":
     engine = get_engine()
     price_history, recent_history = prepare_data(engine)
     train_and_evaluate(price_history)
     model = train_final_model(price_history)
-    results_df = recursive_forecast(model, recent_history)
-    load_fact_forecast(results_df, engine)
+    forecast_df = recursive_forecast(model, recent_history)
+    load_fact_forecast(forecast_df, engine)
