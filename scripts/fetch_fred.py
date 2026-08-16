@@ -1,14 +1,26 @@
+import os
 import pandas as pd
+import requests
 from dotenv import load_dotenv
 from db import get_engine
-import requests
-import os
 
 load_dotenv()
-api_key = os.getenv("FRED_API_KEY")
+FRED_API_KEY = os.getenv("FRED_API_KEY")
+
+FRED_BASE_URL = "https://api.stlouisfed.org/fred/series/observations"
+OBSERVATION_START = "2000-01-01"
+
 
 def fetch_fred_series(series_id, column_name):
-    url = "https://api.stlouisfed.org/fred/series/observations?series_id=" + series_id + "&api_key=" + api_key + "&observation_start=2000-01-01&file_type=json"
+    """Download one FRED series and return it as a (date, column_name) DataFrame.
+
+    FRED marks missing observations with the string "." rather than an
+    empty value, hence pd.to_numeric(errors="coerce") instead of astype.
+    """
+    url = (
+        f"{FRED_BASE_URL}?series_id={series_id}&api_key={FRED_API_KEY}"
+        f"&observation_start={OBSERVATION_START}&file_type=json"
+    )
 
     data = requests.get(url).json()
     df = pd.DataFrame(data["observations"])
@@ -16,29 +28,40 @@ def fetch_fred_series(series_id, column_name):
     df["date"] = pd.to_datetime(df["date"])
     df["value"] = pd.to_numeric(df["value"], errors="coerce")
 
-    df_series = df[["date", "value"]]
-    df_series = df_series.rename(columns={"value":column_name})
-    
-    return df_series
+    series = df[["date", "value"]].rename(columns={"value": column_name})
+    return series
+
 
 def fetch_and_clean_macro():
-    mortgage_series = fetch_fred_series("MORTGAGE30US", "mortgage_rate_30y")
-    shiller_series = fetch_fred_series("CSUSHPISA", "case_shiller_index")
+    """Fetch mortgage rate (weekly) and Case-Shiller index (monthly),
+    align them to a common monthly grain, and merge them.
 
-    mortgage_series = mortgage_series.set_index("date").resample("ME").mean().reset_index()
-    shiller_series["date"] = shiller_series["date"] + pd.offsets.MonthEnd(0)
-    macro_final = mortgage_series.merge(shiller_series, on="date")
-    
-    return macro_final
+    Mortgage rate is resampled to month-end averages. Case-Shiller dates
+    (which FRED reports as the first of the month) are shifted to
+    month-end to match fact_home_values' date convention. The inner
+    merge intentionally drops recent months where Case-Shiller (released
+    with a ~2-3 month lag) isn't available yet.
+    """
+    mortgage_rate = fetch_fred_series("MORTGAGE30US", "mortgage_rate_30y")
+    case_shiller = fetch_fred_series("CSUSHPISA", "case_shiller_index")
 
-def load_fact_macro(macro_final, engine):
+    mortgage_rate = mortgage_rate.set_index("date").resample("ME").mean().reset_index()
+    case_shiller["date"] = case_shiller["date"] + pd.offsets.MonthEnd(0)
+
+    macro_monthly = mortgage_rate.merge(case_shiller, on="date")
+    return macro_monthly
+
+
+def load_fact_macro(macro_monthly, engine):
+    """Write the merged macro data to fact_macro, once."""
     existing = pd.read_sql("SELECT COUNT(*) FROM fact_macro", engine).iloc[0, 0]
     if existing == 0:
-        macro_final.to_sql("fact_macro", engine, if_exists="append", index=False)
+        macro_monthly.to_sql("fact_macro", engine, if_exists="append", index=False)
     else:
         print(f"fact_macro already has {existing} rows")
-    
+
+
 if __name__ == "__main__":
     engine = get_engine()
-    macro_final = fetch_and_clean_macro()
-    load_fact_macro(macro_final, engine)
+    macro_monthly = fetch_and_clean_macro()
+    load_fact_macro(macro_monthly, engine)
