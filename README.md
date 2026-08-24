@@ -4,7 +4,7 @@ An end-to-end data engineering and analytics project that scores and ranks the 5
 
 **[View the live dashboard →](https://app.powerbi.com/view?r=eyJrIjoiODM4ZmI0OTMtYTFkOS00NmY5LTk1MjMtMDE0NzdlZmI4NDIzIiwidCI6ImNlMzE0NzhkLTZlN2EtNGNlNy04NjcwLWE1YjlkNTE4ODRmOSIsImMiOjh9)**
 
-Built by [Samuel Pollák](https://github.com/S4mYo) — Data Science student (Finance & Economics), founder of [Monsberg Group](https://github.com/S4mYo).
+Built by [Samuel Pollák](https://github.com/S4mYo) — Data Science student (Finance & Economics).
 
 ---
 
