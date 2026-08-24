@@ -45,16 +45,30 @@ def load_dim_metro(zhvi_long, engine):
 
 
 def load_fact_home_values(zhvi_long, engine):
-    """Join ZHVI rows to their metro_id and write them to fact_home_values."""
+    """Join ZHVI rows to their metro_id and write new rows to fact_home_values.
+
+    Only inserts rows for (metro_id, date, home_type) combinations not
+    already present — safe to re-run monthly without duplicating history.
+    """
     dim_metro_db = pd.read_sql("SELECT metro_id, zillow_region_name FROM dim_metro", engine)
     zhvi_with_id = zhvi_long.merge(dim_metro_db, left_on="RegionName", right_on="zillow_region_name")
     to_upload = zhvi_with_id[["metro_id", "date", "home_type", "zhvi_value"]]
 
-    existing_facts = pd.read_sql("SELECT COUNT(*) FROM fact_home_values", engine).iloc[0, 0]
-    if existing_facts == 0:
-        to_upload.to_sql("fact_home_values", engine, if_exists="append", index=False)
+    existing = pd.read_sql(
+        "SELECT metro_id, date, home_type FROM fact_home_values", engine
+        )
+    existing["date"] = pd.to_datetime(existing["date"])
+    
+    merged = to_upload.merge(
+        existing, on=["metro_id", "date", "home_type"], how="left", indicator=True
+    )
+    new_rows = merged[merged["_merge"] == "left_only"].drop(columns=["_merge"])
+    
+    if len(new_rows) > 0:
+        new_rows.to_sql("fact_home_values", engine, if_exists="append", index=False)
+        print(f"Inserted {len(new_rows)} new rows into fact_home_values")
     else:
-        print(f"fact_home_values already has {existing_facts} rows")
+        print("No new rows to insert into fact_home_values")
 
 
 if __name__ == "__main__":

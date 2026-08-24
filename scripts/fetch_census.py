@@ -1,10 +1,27 @@
 import pandas as pd
 from sqlalchemy import text
 from db import get_engine
+import requests
+from datetime import date
 
-CENSUS_URL = "https://www2.census.gov/programs-surveys/popest/datasets/2020-2025/metro/totals/cbsa-est2025-alldata.csv"
+
 METRO_LSAD = "Metropolitan Statistical Area"
 
+def get_latest_census_vintage():
+    """Find the latest available Census vintage by checking which
+    vintage-year URL actually resolves, starting from the estimated
+    latest year and falling back to earlier ones if not yet published.
+    """
+    current_year = date.today().year
+    for vintage in [current_year - 1, current_year - 2, current_year - 3]:
+        url = (
+            f"https://www2.census.gov/programs-surveys/popest/datasets/"
+            f"2020-{vintage}/metro/totals/cbsa-est{vintage}-alldata.csv"
+        )
+        response = requests.head(url, headers={"User-Agent": "Mozilla/5.0"})
+        if response.status_code == 200:
+            return vintage
+    raise RuntimeError("Could not find a valid Census vintage URL")
 
 def fetch_and_clean_census(engine):
     """Download Census population estimates and match them to dim_metro.
@@ -26,8 +43,14 @@ def fetch_and_clean_census(engine):
     storage_options sets a browser-like User-Agent because Cloudflare
     blocks pandas' default "Python-urllib" user agent with a 403.
     """
+    vintage = get_latest_census_vintage()
+    census_url = (
+        f"https://www2.census.gov/programs-surveys/popest/datasets/"
+        f"2020-{vintage}/metro/totals/cbsa-est{vintage}-alldata.csv"
+    )
+
     df = pd.read_csv(
-        CENSUS_URL,
+        census_url,
         encoding="latin-1",
         storage_options={"User-Agent": "Mozilla/5.0"},
     )
@@ -63,7 +86,13 @@ def update_dim_metro_cbsa(census_with_metro_id, engine):
 
 def load_fact_population(census_with_metro_id, engine):
     """Reshape wide POPESTIMATE{year}/NETMIG{year} columns into one row
-    per (metro, year), and write the result to fact_population."""
+    per (metro, year), and write new rows to fact_population.
+
+    Only inserts (metro_id, year) combinations not already present —
+    safe to re-run annually without duplicating history. Census
+    typically republishes the same vintage file unchanged between runs,
+    so a re-run without new data correctly inserts nothing.
+    """
     year_cols = [
         c for c in census_with_metro_id.columns
         if c.startswith("POPESTIMATE") or c.startswith("NETMIG") or c == "metro_id"
@@ -81,11 +110,20 @@ def load_fact_population(census_with_metro_id, engine):
         columns={"POPESTIMATE": "population", "NETMIG": "net_migration"}
     )
 
-    existing = pd.read_sql("SELECT COUNT(*) FROM fact_population", engine).iloc[0, 0]
-    if existing == 0:
-        population_long.to_sql("fact_population", engine, if_exists="append", index=False)
+    existing = pd.read_sql(
+        "SELECT metro_id, year FROM fact_population", engine
+        )
+    
+    merged = population_long.merge(
+        existing, on=["metro_id", "year"], how="left", indicator=True
+        )
+    new_rows = merged[merged["_merge"] == "left_only"].drop(columns=["_merge"])
+    
+    if len(new_rows) > 0:
+        new_rows.to_sql("fact_population", engine, if_exists="append", index=False)
+        print(f"Inserted {len(new_rows)} new rows into fact_population")
     else:
-        print(f"fact_population already has {existing} rows")
+        print(f"No new rows to insert into fact_population")
 
 
 if __name__ == "__main__":

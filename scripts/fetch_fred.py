@@ -53,12 +53,26 @@ def fetch_and_clean_macro():
 
 
 def load_fact_macro(macro_monthly, engine):
-    """Write the merged macro data to fact_macro, once."""
-    existing = pd.read_sql("SELECT COUNT(*) FROM fact_macro", engine).iloc[0, 0]
-    if existing == 0:
-        macro_monthly.to_sql("fact_macro", engine, if_exists="append", index=False)
+    """Write new rows to fact_macro.
+
+    Only inserts rows for dates not already present — safe to re-run
+    monthly without duplicating history.
+    """
+    existing = pd.read_sql(
+        "SELECT date FROM fact_macro", engine
+        )
+    existing["date"] = pd.to_datetime(existing["date"])
+    
+    merged = macro_monthly.merge(
+        existing, on="date", how="left", indicator=True
+    )
+    new_rows = merged[merged["_merge"] == "left_only"].drop(columns=["_merge"])
+    
+    if len(new_rows) > 0:
+        new_rows.to_sql("fact_macro", engine, if_exists="append", index=False)
+        print(f"Inserted {len(new_rows)} new rows into fact_macro")
     else:
-        print(f"fact_macro already has {existing} rows")
+        print(f"No new rows to insert into fact_macro")
 
 
 if __name__ == "__main__":

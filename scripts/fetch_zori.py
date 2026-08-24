@@ -29,18 +29,31 @@ def fetch_and_clean_zori(existing_metros):
 
 
 def load_fact_rent(zori_long, engine):
-    """Join ZORI rows to their metro_id and write them to fact_rent."""
+    """Join ZORI rows to their metro_id and write new rows to fact_rent.
+
+    Only inserts rows for (metro_id, date) combinations not already
+    present — safe to re-run monthly without duplicating history.
+    """
     dim_metro_db = pd.read_sql("SELECT metro_id, zillow_region_name FROM dim_metro", engine)
     zori_with_id = zori_long.merge(dim_metro_db, left_on="RegionName", right_on="zillow_region_name")
 
     to_upload = zori_with_id[["metro_id", "date", "zori_value"]]
 
-    existing_facts = pd.read_sql("SELECT COUNT(*) FROM fact_rent", engine).iloc[0, 0]
-    if existing_facts == 0:
-        to_upload.to_sql("fact_rent", engine, if_exists="append", index=False)
+    existing = pd.read_sql(
+        "SELECT metro_id, date FROM fact_rent", engine
+        )
+    existing["date"] = pd.to_datetime(existing["date"])
+    
+    merged = to_upload.merge(
+        existing, on=["metro_id", "date"], how="left", indicator=True
+        ) 
+    new_rows = merged[merged["_merge"] == "left_only"].drop(columns=["_merge"])
+    
+    if len(new_rows) > 0:
+        new_rows.to_sql("fact_rent", engine, if_exists="append", index=False)
+        print(f"Inserted {len(new_rows)} new rows into fact_rent")
     else:
-        print(f"fact_rent already has {existing_facts} rows")
-
+        print("No new rows to insert into fact_rent")
 
 if __name__ == "__main__":
     engine = get_engine()

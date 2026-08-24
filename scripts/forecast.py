@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+from sqlalchemy import text
 from db import get_engine
 from xgboost import XGBRegressor
 from sklearn.metrics import mean_absolute_percentage_error, mean_absolute_error
@@ -150,24 +151,57 @@ def recursive_forecast(model, recent_history):
 
 
 def load_fact_forecast(forecast_df, engine):
-    """Write the forecast to fact_forecast, once.
+    """Replace fact_forecast with the latest forecast.
 
-    NOTE: this guard writes only on a fully empty table, so it won't
-    refresh the forecast on a second run. Revisit this when the monthly
-    automation is built - likely via model_version instead of a row-count
-    guard, so each run's forecast is distinguishable.
+    Deletes all existing rows and inserts the new forecast — safe to
+    re-run monthly. Historical forecast snapshots aren't preserved;
+    the dashboard only needs the current forecast, not a version history.
     """
-    existing = pd.read_sql("SELECT COUNT(*) FROM fact_forecast", engine).iloc[0, 0]
-    if existing == 0:
-        forecast_df.to_sql("fact_forecast", engine, if_exists="append", index=False)
-    else:
-        print(f"fact_forecast already has {existing} rows")
+    with engine.connect() as conn:
+        conn.execute(text("DELETE FROM fact_forecast"))
+        conn.commit()
 
+    forecast_df.to_sql("fact_forecast", engine, if_exists="append", index=False)
+    print(f"Replaced fact_forecast with {len(forecast_df)} new rows")
+
+def should_run_forecast(engine):
+    """Check whether new ZHVI data has arrived since the last forecast run.
+
+    Compares the latest fact_home_values date against the forecast's
+    created_at timestamp — skips the (expensive) model retraining and
+    recursive prediction if nothing has changed since the last run.
+    """
+    latest_data_date = pd.read_sql(
+        "SELECT MAX(date) AS latest FROM fact_home_values", engine
+    ).iloc[0,0]
+    
+    forecast_created = pd.read_sql(
+        "SELECT MAX(created_at) AS latest FROM fact_forecast", engine
+    ).iloc[0,0]
+    
+    if forecast_created is None:
+        return True
+    
+    latest_data_date = pd.to_datetime(latest_data_date)
+    forecast_created = pd.to_datetime(forecast_created)
+    
+    return latest_data_date > forecast_created
+
+import pandas as pd
+from db import get_engine
+
+engine = get_engine()
+print("Latest ZHVI date:", pd.read_sql("SELECT MAX(date) FROM fact_home_values", engine).iloc[0,0])
+print("Forecast created at:", pd.read_sql("SELECT MAX(created_at) FROM fact_forecast", engine).iloc[0,0])
 
 if __name__ == "__main__":
     engine = get_engine()
-    price_history, recent_history = prepare_data(engine)
-    train_and_evaluate(price_history)
-    model = train_final_model(price_history)
-    forecast_df = recursive_forecast(model, recent_history)
-    load_fact_forecast(forecast_df, engine)
+    
+    if not should_run_forecast(engine):
+        print("No new ZHVI data since last forecast run - skipping")
+    else:
+        price_history, recent_history = prepare_data(engine)
+        train_and_evaluate(price_history)
+        model = train_final_model(price_history)
+        forecast_df = recursive_forecast(model, recent_history)
+        load_fact_forecast(forecast_df, engine)
