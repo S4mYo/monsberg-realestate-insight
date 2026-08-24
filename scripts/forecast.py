@@ -187,12 +187,6 @@ def should_run_forecast(engine):
     
     return latest_data_date > forecast_created
 
-import pandas as pd
-from db import get_engine
-
-engine = get_engine()
-print("Latest ZHVI date:", pd.read_sql("SELECT MAX(date) FROM fact_home_values", engine).iloc[0,0])
-print("Forecast created at:", pd.read_sql("SELECT MAX(created_at) FROM fact_forecast", engine).iloc[0,0])
 
 if __name__ == "__main__":
     engine = get_engine()
