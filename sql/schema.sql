@@ -84,6 +84,8 @@ CREATE TABLE fact_forecast (
     metro_id INT REFERENCES dim_metro(metro_id),
     forecast_date DATE NOT NULL,
     predicted_zhvi NUMERIC,
+    lower_bound NUMERIC,
+    upper_bound NUMERIC,
     model_version TEXT,
     created_at TIMESTAMP DEFAULT now(),
     PRIMARY KEY (metro_id, forecast_date, model_version)

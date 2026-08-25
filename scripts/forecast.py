@@ -71,6 +71,11 @@ def train_and_evaluate(price_history):
     MAPE is reported for reference but is unreliable here since
     pct_change often sits near zero, making its percentage blow up;
     MAE is the metric that actually matters.
+
+    Returns:
+        mae: the model's mean absolute error on the held-out test set,
+            used later to build widening confidence intervals for the
+            recursive forecast.
     """
     cutoff_date = price_history["date"].max() - pd.DateOffset(months=TEST_WINDOW_MONTHS)
     train = price_history[price_history["date"] <= cutoff_date]
@@ -83,8 +88,10 @@ def train_and_evaluate(price_history):
     model.fit(X_train, y_train)
 
     predictions = model.predict(X_test)
+    mae = mean_absolute_error(y_test, predictions)
+    
     print(f"MAPE: {mean_absolute_percentage_error(y_test, predictions):.4f}")
-    print(f"MAE: {mean_absolute_error(y_test, predictions):.5f}")
+    print(f"MAE: {mae:.5f}")
 
     baseline_zero = mean_absolute_error(y_test, np.zeros(len(y_test)))
     print(f"Baseline (always 0): {baseline_zero:.5f}")
@@ -94,6 +101,8 @@ def train_and_evaluate(price_history):
     # a small improvement over it is a real, honest result.
     baseline_naive = mean_absolute_error(y_test, X_test["lag_1"])
     print(f"Baseline (same as month before): {baseline_naive:.5f}")
+    
+    return mae
 
 
 def train_final_model(price_history):
@@ -108,14 +117,24 @@ def train_final_model(price_history):
     return final_model
 
 
-def recursive_forecast(model, recent_history):
-    """Predict ZHVI FORECAST_HORIZON_MONTHS ahead for every metro.
+CONFIDENCE_Z = 1.28  # ~80% interval
+
+def recursive_forecast(model, recent_history, mae):
+    """Predict ZHVI FORECAST_HORIZON_MONTHS ahead for every metro, with
+    a widening confidence interval around each step's prediction.
 
     The model predicts one month at a time. Each month's predicted
     pct_change is appended to that metro's history and becomes the lag
     input for the next month - the model's own prior prediction feeds
     the next step, hence "recursive". Predicted prices are built up from
     the last known real price by compounding each step's predicted change.
+
+    Confidence interval: since each recursive step's error is roughly
+    independent, uncertainty compounds with the square root of the
+    number of steps (the standard result for a random-walk process) -
+    margin = CONFIDENCE_Z * mae * sqrt(step). This keeps month 1 tight
+    and lets month 12 be visibly wider, rather than presenting the full
+    horizon with equal, overstated confidence.
     """
     forecast_rows = []
     for metro_id in recent_history["metro_id"].unique():
@@ -125,7 +144,7 @@ def recursive_forecast(model, recent_history):
         last_price = metro_history["zhvi_value"].iloc[-1]
         last_date = metro_history["date"].iloc[-1]
 
-        for _ in range(FORECAST_HORIZON_MONTHS):
+        for step in range(1, FORECAST_HORIZON_MONTHS + 1):
             target_date = last_date + pd.offsets.MonthEnd(1)
 
             lag_values = [change_history[-lag] for lag in LAG_WINDOWS]
@@ -136,14 +155,20 @@ def recursive_forecast(model, recent_history):
 
             predicted_price = last_price * (1 + predicted_change)
 
+            margin = CONFIDENCE_Z * mae * (step ** 0.5)
+            lower_bound = predicted_price * (1 - margin)
+            upper_bound = predicted_price * (1 + margin)
+
             change_history.append(predicted_change)
             last_price = predicted_price
             last_date = target_date
 
-            forecast_rows.append((metro_id, target_date, predicted_price))
+            forecast_rows.append(
+                (metro_id, target_date, predicted_price, lower_bound, upper_bound)
+                )
 
     forecast_df = pd.DataFrame(
-        forecast_rows, columns=["metro_id", "forecast_date", "predicted_zhvi"]
+        forecast_rows, columns=["metro_id", "forecast_date", "predicted_zhvi", "lower_bound", "upper_bound"]
     )
     forecast_df["model_version"] = MODEL_VERSION
 
@@ -204,7 +229,7 @@ if __name__ == "__main__":
         print("No new ZHVI data since last forecast run - skipping")
     else:
         price_history, recent_history = prepare_data(engine)
-        train_and_evaluate(price_history)
+        mae = train_and_evaluate(price_history)
         model = train_final_model(price_history)
-        forecast_df = recursive_forecast(model, recent_history)
+        forecast_df = recursive_forecast(model, recent_history, mae)
         load_fact_forecast(forecast_df, engine)
