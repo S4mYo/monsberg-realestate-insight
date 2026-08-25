@@ -24,4 +24,4 @@ jobs:
       - name: Fetch Census population data
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: python scripts/fetch_census.py
+        run: python -m scripts.fetch_census.py

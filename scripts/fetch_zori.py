@@ -1,5 +1,5 @@
 import pandas as pd
-from db import get_engine
+from scripts.db import get_engine
 
 ZORI_URL = "https://files.zillowstatic.com/research/public_csvs/zori/Metro_zori_uc_sfrcondomfr_sm_month.csv?t=1786371714"
 

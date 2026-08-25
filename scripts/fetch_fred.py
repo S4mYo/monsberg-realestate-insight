@@ -2,7 +2,7 @@ import os
 import pandas as pd
 import requests
 from dotenv import load_dotenv
-from db import get_engine
+from scripts.db import get_engine
 
 load_dotenv()
 FRED_API_KEY = os.getenv("FRED_API_KEY")

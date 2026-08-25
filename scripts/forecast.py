@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 from sqlalchemy import text
-from db import get_engine
+from scripts.db import get_engine
 from xgboost import XGBRegressor
 from sklearn.metrics import mean_absolute_percentage_error, mean_absolute_error
 
