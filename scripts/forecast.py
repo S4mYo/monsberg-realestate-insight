@@ -12,6 +12,13 @@ TEST_WINDOW_MONTHS = 12
 MODEL_VERSION = "xgb_v1"
 
 
+def add_lag_features(df, lag_windows):
+    """Add lagged pct_change columns, grouped by metro so lags never
+    cross metro boundaries."""
+    for lag in lag_windows:
+        df[f"lag_{lag}"] = df.groupby("metro_id")["pct_change"].shift(lag)
+    return df
+
 def prepare_data(engine):
     """Load ZHVI price history and engineer features for the forecast model.
 
@@ -46,9 +53,7 @@ def prepare_data(engine):
 
     recent_history = price_history.groupby("metro_id").tail(FORECAST_HORIZON_MONTHS)
 
-    for lag in LAG_WINDOWS:
-        price_history[f"lag_{lag}"] = price_history.groupby("metro_id")["pct_change"].shift(lag)
-
+    price_history = add_lag_features(price_history, LAG_WINDOWS)
     price_history["month"] = price_history["date"].dt.month
     price_history = price_history.dropna(subset=[f"lag_{w}" for w in LAG_WINDOWS])
 
@@ -123,14 +128,9 @@ def recursive_forecast(model, recent_history):
         for _ in range(FORECAST_HORIZON_MONTHS):
             target_date = last_date + pd.offsets.MonthEnd(1)
 
-            feature_values = [
-                metro_id,
-                change_history[-1],
-                change_history[-3],
-                change_history[-6],
-                change_history[-12],
-                target_date.month,
-            ]
+            lag_values = [change_history[-lag] for lag in LAG_WINDOWS]
+            feature_values = [metro_id] + lag_values + [target_date.month]
+            
             feature_row = pd.DataFrame([feature_values], columns=FEATURES)
             predicted_change = model.predict(feature_row)[0]
 
