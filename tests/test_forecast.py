@@ -1,5 +1,5 @@
 import pandas as pd
-from scripts.forecast import add_lag_features, recursive_forecast, FEATURES
+from scripts.forecast import add_lag_features, recursive_forecast, FEATURES, is_forecast_stale
 
 def test_lag_1_shifts_by_one_row():
     """lag_1 for a given row equals pct_change from the row before it."""
@@ -93,3 +93,26 @@ def test_recursive_forecast_compounds_price_correctly():
 
     first_month_price = result.iloc[0]["predicted_zhvi"]
     assert abs(first_month_price - 100000 * 1.01) < 0.01
+    
+def test_no_existing_forecast_means_stale():
+    """If fact_forecast is empty (forecast_created is None), a run is needed."""
+    assert is_forecast_stale(latest_data_date="2026-07-31", forecast_created=None) is True
+
+
+def test_newer_data_than_forecast_means_stale():
+    """New price data arrived after the last forecast was created."""
+    result = is_forecast_stale(
+        latest_data_date="2026-08-31",
+        forecast_created="2026-08-16 16:26:45",
+    )
+    assert result is True
+
+
+def test_forecast_already_covers_latest_data():
+    """The forecast was created after the latest data point — no new data
+    has arrived, so no re-run is needed."""
+    result = is_forecast_stale(
+        latest_data_date="2026-07-31",
+        forecast_created="2026-08-16 16:26:45",
+    )
+    assert result is False

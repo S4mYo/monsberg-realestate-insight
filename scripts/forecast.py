@@ -164,6 +164,21 @@ def load_fact_forecast(forecast_df, engine):
     forecast_df.to_sql("fact_forecast", engine, if_exists="append", index=False)
     print(f"Replaced fact_forecast with {len(forecast_df)} new rows")
 
+def is_forecast_stale(latest_data_date, forecast_created):
+    """Compare the latest price data date against when the forecast was
+    last generated, to decide whether a re-run is needed.
+
+    Returns True if there's no forecast yet, or if new price data has
+    arrived since the forecast was last created.
+    """
+    if forecast_created is None:
+        return True
+    
+    latest_data_date = pd.to_datetime(latest_data_date)
+    forecast_created = pd.to_datetime(forecast_created)
+    
+    return latest_data_date > forecast_created
+
 def should_run_forecast(engine):
     """Check whether new ZHVI data has arrived since the last forecast run.
 
@@ -178,14 +193,8 @@ def should_run_forecast(engine):
     forecast_created = pd.read_sql(
         "SELECT MAX(created_at) AS latest FROM fact_forecast", engine
     ).iloc[0,0]
-    
-    if forecast_created is None:
-        return True
-    
-    latest_data_date = pd.to_datetime(latest_data_date)
-    forecast_created = pd.to_datetime(forecast_created)
-    
-    return latest_data_date > forecast_created
+
+    return is_forecast_stale(latest_data_date, forecast_created)
 
 
 if __name__ == "__main__":
