@@ -75,7 +75,7 @@ def test_recursive_fore_cast_produces_correct_row_count():
         "zhvi_value": [100000] * 12,
     })
     
-    result = recursive_forecast(FakeModel(), recent_history)
+    result = recursive_forecast(FakeModel(), recent_history, mae=0.01)
     
     assert len(result) == 12
 
@@ -89,7 +89,7 @@ def test_recursive_forecast_compounds_price_correctly():
         "zhvi_value": [100000] * 12,
     })
 
-    result = recursive_forecast(FakeModel(), recent_history)
+    result = recursive_forecast(FakeModel(), recent_history, mae=0.01)
 
     first_month_price = result.iloc[0]["predicted_zhvi"]
     assert abs(first_month_price - 100000 * 1.01) < 0.01
@@ -116,3 +116,35 @@ def test_forecast_already_covers_latest_data():
         forecast_created="2026-08-16 16:26:45",
     )
     assert result is False
+    
+def test_confidence_interval_widens_with_forecast_horizon():
+    """The gap between upper and lower bound should grow as the forecast
+    horizon extends further out."""
+    recent_history = pd.DataFrame({
+        "metro_id": [1] * 12,
+        "date": pd.date_range("2025-01-31", periods=12, freq="ME"),
+        "pct_change": [0.01] * 12,
+        "zhvi_value": [100000] * 12,
+    })
+
+    result = recursive_forecast(FakeModel(), recent_history, mae=0.01)
+
+    first_month_width = result.iloc[0]["upper_bound"] - result.iloc[0]["lower_bound"]
+    last_month_width = result.iloc[-1]["upper_bound"] - result.iloc[-1]["lower_bound"]
+
+    assert last_month_width > first_month_width
+
+
+def test_predicted_price_sits_between_bounds():
+    """The point prediction should always fall within its own interval."""
+    recent_history = pd.DataFrame({
+        "metro_id": [1] * 12,
+        "date": pd.date_range("2025-01-31", periods=12, freq="ME"),
+        "pct_change": [0.01] * 12,
+        "zhvi_value": [100000] * 12,
+    })
+
+    result = recursive_forecast(FakeModel(), recent_history, mae=0.01)
+
+    assert (result["lower_bound"] < result["predicted_zhvi"]).all()
+    assert (result["predicted_zhvi"] < result["upper_bound"]).all()
