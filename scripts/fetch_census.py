@@ -1,6 +1,6 @@
 import pandas as pd
 from sqlalchemy import text
-from scripts.db import get_engine
+from scripts.db import get_engine, get_new_rows
 import requests
 from datetime import date
 
@@ -126,10 +126,7 @@ def load_fact_population(census_with_metro_id, engine):
         "SELECT metro_id, year FROM fact_population", engine
         )
     
-    merged = population_long.merge(
-        existing, on=["metro_id", "year"], how="left", indicator=True
-        )
-    new_rows = merged[merged["_merge"] == "left_only"].drop(columns=["_merge"])
+    new_rows = get_new_rows(population_long, existing, key_columns=["metro_id", "year"])
     
     if len(new_rows) > 0:
         new_rows.to_sql("fact_population", engine, if_exists="append", index=False)

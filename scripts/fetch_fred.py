@@ -2,7 +2,7 @@ import os
 import pandas as pd
 import requests
 from dotenv import load_dotenv
-from scripts.db import get_engine
+from scripts.db import get_engine, get_new_rows
 
 load_dotenv()
 FRED_API_KEY = os.getenv("FRED_API_KEY")
@@ -63,10 +63,7 @@ def load_fact_macro(macro_monthly, engine):
         )
     existing["date"] = pd.to_datetime(existing["date"])
     
-    merged = macro_monthly.merge(
-        existing, on="date", how="left", indicator=True
-    )
-    new_rows = merged[merged["_merge"] == "left_only"].drop(columns=["_merge"])
+    new_rows = get_new_rows(macro_monthly ,existing, key_columns=["date"])
     
     if len(new_rows) > 0:
         new_rows.to_sql("fact_macro", engine, if_exists="append", index=False)

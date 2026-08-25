@@ -1,5 +1,5 @@
 import pandas as pd
-from scripts.db import get_engine
+from scripts.db import get_engine, get_new_rows
 
 ZHVI_URL = "https://files.zillowstatic.com/research/public_csvs/zhvi/Metro_zhvi_uc_sfrcondo_tier_0.33_0.67_sm_sa_month.csv?t=1786371714"
 TOP_N_METROS = 50
@@ -59,10 +59,7 @@ def load_fact_home_values(zhvi_long, engine):
         )
     existing["date"] = pd.to_datetime(existing["date"])
     
-    merged = to_upload.merge(
-        existing, on=["metro_id", "date", "home_type"], how="left", indicator=True
-    )
-    new_rows = merged[merged["_merge"] == "left_only"].drop(columns=["_merge"])
+    new_rows = get_new_rows(to_upload, existing, key_columns=["metro_id", "date", "home_type"])
     
     if len(new_rows) > 0:
         new_rows.to_sql("fact_home_values", engine, if_exists="append", index=False)

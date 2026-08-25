@@ -1,5 +1,5 @@
 import pandas as pd
-from scripts.db import get_engine
+from scripts.db import get_engine, get_new_rows
 
 ZORI_URL = "https://files.zillowstatic.com/research/public_csvs/zori/Metro_zori_uc_sfrcondomfr_sm_month.csv?t=1786371714"
 
@@ -44,10 +44,7 @@ def load_fact_rent(zori_long, engine):
         )
     existing["date"] = pd.to_datetime(existing["date"])
     
-    merged = to_upload.merge(
-        existing, on=["metro_id", "date"], how="left", indicator=True
-        ) 
-    new_rows = merged[merged["_merge"] == "left_only"].drop(columns=["_merge"])
+    new_rows = get_new_rows(to_upload, existing, ["metro_id", "date"])
     
     if len(new_rows) > 0:
         new_rows.to_sql("fact_rent", engine, if_exists="append", index=False)
