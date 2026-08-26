@@ -3,6 +3,20 @@ from scripts.db import get_engine, get_new_rows, derive_zillow_style_name
 
 NEIGHBORHOOD_ZHVI_URL = "https://files.zillowstatic.com/research/public_csvs/zhvi/Neighborhood_zhvi_uc_sfrcondo_tier_0.33_0.67_sm_sa_month.csv?t=1787729777"
 
+
+def keep_primary_region_per_name(df):
+    """Keep only the lowest-SizeRank row per (RegionName, City, State).
+
+    Zillow occasionally publishes two RegionIDs for what appears to be
+    the same neighborhood name (e.g. after redefining boundaries), each
+    carrying its own separate price history. Keeping only the lowest
+    SizeRank (Zillow's own notion of "primary") avoids inserting two
+    conflicting histories under the same neighborhood_id.
+    """
+    return df.sort_values("SizeRank").drop_duplicates(
+        subset=["RegionName", "City", "State"], keep="first"
+    )
+
 def fetch_and_clean_neighborhood_zhvi(engine):
     """Download Zillow's neighborhood-level ZHVI and match each row to
     its metro in the existing 50-metro roster.
@@ -17,15 +31,7 @@ def fetch_and_clean_neighborhood_zhvi(engine):
         storage_options={"User-Agent": "Mozilla/5.0"},
     )
     
-    # Zillow occasionally has two RegionIDs for the same neighborhood
-    # name (e.g. after redefining boundaries), each carrying separate
-    # history. Keeping only the lowest SizeRank (Zillow's own notion of
-    # "primary") per (RegionName, City, State) avoids inserting two
-    # conflicting price histories under the same neighborhood_id.
-    df = df.sort_values("SizeRank").drop_duplicates(
-        subset=["RegionName", "City", "State"], keep="first"
-    )
-    
+    df = keep_primary_region_per_name(df)
     df["derived_metro_name"] = derive_zillow_style_name(df["Metro"])
     
     dim_metro_db = pd.read_sql("SELECT metro_id, zillow_region_name FROM dim_metro", engine)

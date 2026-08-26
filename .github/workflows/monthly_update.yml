@@ -23,20 +23,25 @@ jobs:
       - name: Fetch ZHVI data
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: python -m scripts.fetch_zhvi.py
+        run: python -m scripts.fetch_zhvi
+
+      - name: Fetch neighborhood-level ZHVI data
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m scripts.fetch_zhvi_neighborhood
 
       - name: Fetch ZORI data
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: python -m scripts.fetch_zori.py
+        run: python -m scripts.fetch_zori
 
       - name: Fetch FRED macro data
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
-        run: python -m scripts.fetch_fred.py
+        run: python -m scripts.fetch_fred
 
       - name: Run forecast
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: python -m scripts.forecast.py
+        run: python -m scripts.forecast
