@@ -1,6 +1,6 @@
 import pandas as pd
 from sqlalchemy import text
-from scripts.db import get_engine, get_new_rows
+from scripts.db import get_engine, get_new_rows, derive_zillow_style_name
 import requests
 from datetime import date
 
@@ -22,21 +22,6 @@ def get_latest_census_vintage():
         if response.status_code == 200:
             return vintage
     raise RuntimeError("Could not find a valid Census vintage URL")
-
-def derive_zillow_style_name(name_series):
-    """Convert Census metro names to Zillow's naming format.
-
-    Census: "Albany-Schenectady-Troy, NY" (all constituent cities)
-    Zillow: "Albany, NY" (principal city only)
-
-    Takes the text before the first hyphen on each side of the comma.
-    Slashes (e.g. "Louisville/Jefferson County, KY-IN") are normalized
-    to hyphens first, so both separators are handled the same way.
-    """
-    name_clean = name_series.str.replace("/", "-")
-    city = name_clean.str.split(", ").str[0].str.split("-").str[0]
-    state = name_clean.str.split(", ").str[1].str.split("-").str[0]
-    return city + ", " + state
 
 def fetch_and_clean_census(engine):
     """Download Census population estimates and match them to dim_metro.

@@ -1,5 +1,5 @@
 import pandas as pd
-from scripts.fetch_census import derive_zillow_style_name
+from scripts.db import derive_zillow_style_name
 
 def test_simple_two_word_metro():
     """A metro name with no hyphens should pass through unchanged."""

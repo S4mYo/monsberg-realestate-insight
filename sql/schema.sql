@@ -93,3 +93,50 @@ CREATE TABLE fact_forecast (
 
 COMMENT ON TABLE fact_forecast IS 'Model output, kept separate from fact_home_values so actuals and predictions are never mixed in the same rows.';
 COMMENT ON COLUMN fact_forecast.model_version IS 'Identifier for the model run/version that produced this prediction, for reproducibility.';
+
+-- ============================================
+-- dim_neighborhood: neighborhood roster within each metro
+-- Grain: one row = one Zillow-defined neighborhood
+-- Source: Zillow neighborhood-level ZHVI/ZORI files, matched to the
+--         existing 50-metro roster via the same crosswalk pattern
+--         used for Census (see fetch_census.py)
+-- ============================================
+CREATE TABLE dim_neighborhood (
+    neighborhood_id SERIAL PRIMARY KEY,
+    zillow_region_name TEXT NOT NULL,
+    metro_id INT REFERENCES dim_metro(metro_id),
+    city TEXT,
+    state TEXT,
+    UNIQUE (zillow_region_name, city, metro_id)
+);
+
+COMMENT ON TABLE dim_neighborhood IS 'Neighborhood boundaries are Zillow''s own informal definition, not an official/standardized geography — unlike ZIP codes, these may shift or be renamed in future Zillow releases.';
+COMMENT ON COLUMN dim_neighborhood.zillow_region_name IS 'Neighborhood name as published by Zillow, e.g. "Tremont". Not unique on its own — the same name can recur both across different metros and within the same metro (e.g. one metro can span multiple cities/towns that each independently have a "Downtown"), so the real key is (zillow_region_name, city, metro_id).';
+
+-- ============================================
+-- fact_neighborhood_home_values: ZHVI at the neighborhood level
+-- Grain: one row = one neighborhood + one month
+-- Source: Zillow Neighborhood ZHVI CSV, updated monthly
+-- ============================================
+CREATE TABLE fact_neighborhood_home_values (
+    neighborhood_id INT REFERENCES dim_neighborhood(neighborhood_id),
+    date DATE NOT NULL,
+    zhvi_value NUMERIC,
+    PRIMARY KEY (neighborhood_id, date)
+);
+
+COMMENT ON TABLE fact_neighborhood_home_values IS 'Same grain and update pattern as fact_home_values, one level down in granularity (neighborhood instead of metro).';
+
+-- ============================================
+-- fact_neighborhood_rent: ZORI at the neighborhood level
+-- Grain: one row = one neighborhood + one month
+-- Source: Zillow Neighborhood ZORI CSV, updated monthly
+-- ============================================
+CREATE TABLE fact_neighborhood_rent (
+    neighborhood_id INT REFERENCES dim_neighborhood(neighborhood_id),
+    date DATE NOT NULL,
+    zori_value NUMERIC,
+    PRIMARY KEY (neighborhood_id, date)
+);
+
+COMMENT ON TABLE fact_neighborhood_rent IS 'Neighborhood-level counterpart to fact_rent, enabling a rental yield calculation at the same granularity as fact_neighborhood_home_values.';

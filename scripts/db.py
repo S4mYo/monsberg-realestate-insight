@@ -25,3 +25,14 @@ def get_new_rows(incoming_df, existing_df, key_columns):
         existing_df, on=key_columns, how="left", indicator=True
     )
     return merged[merged["_merge"] == "left_only"].drop(columns=["_merge"])
+
+def derive_zillow_style_name(name_series):
+    """Convert a hyphenated Census/Zillow metro name to the short format
+    used in dim_metro (e.g. "Chicago-Naperville-Elgin, IL-IN-WI" ->
+    "Chicago, IL"). Shared by fetch_census.py and any script matching
+    against Zillow's own long-form Metro names.
+    """
+    name_clean = name_series.str.replace("/", "-")
+    city = name_clean.str.split(", ").str[0].str.split("-").str[0]
+    state = name_clean.str.split(", ").str[1].str.split("-").str[0]
+    return city + ", " + state
