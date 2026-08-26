@@ -126,17 +126,3 @@ CREATE TABLE fact_neighborhood_home_values (
 );
 
 COMMENT ON TABLE fact_neighborhood_home_values IS 'Same grain and update pattern as fact_home_values, one level down in granularity (neighborhood instead of metro).';
-
--- ============================================
--- fact_neighborhood_rent: ZORI at the neighborhood level
--- Grain: one row = one neighborhood + one month
--- Source: Zillow Neighborhood ZORI CSV, updated monthly
--- ============================================
-CREATE TABLE fact_neighborhood_rent (
-    neighborhood_id INT REFERENCES dim_neighborhood(neighborhood_id),
-    date DATE NOT NULL,
-    zori_value NUMERIC,
-    PRIMARY KEY (neighborhood_id, date)
-);
-
-COMMENT ON TABLE fact_neighborhood_rent IS 'Neighborhood-level counterpart to fact_rent, enabling a rental yield calculation at the same granularity as fact_neighborhood_home_values.';
