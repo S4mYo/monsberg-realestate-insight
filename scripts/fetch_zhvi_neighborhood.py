@@ -17,6 +17,17 @@ def keep_primary_region_per_name(df):
         subset=["RegionName", "City", "State"], keep="first"
     )
 
+def add_size_rank_within_metro(df):
+    """Add a per-metro size rank, since Zillow's own SizeRank is global
+    across all US regions and isn't comparable between a large metro
+    (where even a modest neighborhood ranks in the thousands) and a
+    small one (where the top neighborhood might already be near 3000).
+
+    Rank 1 = the most prominent neighborhood within that specific metro.
+    """
+    df["size_rank_within_metro"] = df.groupby("metro_id")["SizeRank"].rank(method="first").astype(int)
+    return df
+
 def fetch_and_clean_neighborhood_zhvi(engine):
     """Download Zillow's neighborhood-level ZHVI and match each row to
     its metro in the existing 50-metro roster.
@@ -36,8 +47,9 @@ def fetch_and_clean_neighborhood_zhvi(engine):
     
     dim_metro_db = pd.read_sql("SELECT metro_id, zillow_region_name FROM dim_metro", engine)
     df = df.merge(dim_metro_db, left_on="derived_metro_name", right_on="zillow_region_name")
+    df = add_size_rank_within_metro(df)
     
-    id_vars = ["RegionName", "City", "State", "metro_id"]
+    id_vars = ["RegionName", "City", "State", "SizeRank", "size_rank_within_metro", "metro_id"]
     date_cols = [c for c in df.columns if c[:4].isdigit()]
     
     neighborhood_long = df.melt(
@@ -58,11 +70,12 @@ def load_dim_neighborhood(neighborhood_long, engine):
     correctly pick up only the new ones, not just skip everything
     because dim_neighborhood already has some rows.
     """
-    neighborhoods = neighborhood_long[["RegionName", "City", "State", "metro_id"]].drop_duplicates()
+    neighborhoods = neighborhood_long[["RegionName", "City", "State", "SizeRank", "size_rank_within_metro", "metro_id"]].drop_duplicates()
     neighborhoods = neighborhoods.rename(columns={
         "RegionName": "zillow_region_name",
         "City": "city",
         "State": "state",
+        "SizeRank": "size_rank"
     })
     
     existing = pd.read_sql("SELECT zillow_region_name, city, metro_id FROM dim_neighborhood", engine)

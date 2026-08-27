@@ -107,11 +107,15 @@ CREATE TABLE dim_neighborhood (
     metro_id INT REFERENCES dim_metro(metro_id),
     city TEXT,
     state TEXT,
+    size_rank INT,
+    size_rank_within_metro INT,
     UNIQUE (zillow_region_name, city, metro_id)
 );
 
 COMMENT ON TABLE dim_neighborhood IS 'Neighborhood boundaries are Zillow''s own informal definition, not an official/standardized geography — unlike ZIP codes, these may shift or be renamed in future Zillow releases.';
 COMMENT ON COLUMN dim_neighborhood.zillow_region_name IS 'Neighborhood name as published by Zillow, e.g. "Tremont". Not unique on its own — the same name can recur both across different metros and within the same metro (e.g. one metro can span multiple cities/towns that each independently have a "Downtown"), so the real key is (zillow_region_name, city, metro_id).';
+COMMENT ON COLUMN dim_neighborhood.size_rank IS 'Zillow''s own global SizeRank across all US regions — lower is more prominent. Not directly comparable across metros of different sizes.';
+COMMENT ON COLUMN dim_neighborhood.size_rank_within_metro IS 'Rank of this neighborhood''s SizeRank relative to other neighborhoods in the same metro only. Rank 1 = most prominent neighborhood in that specific metro — used to filter the Street Overview map to reliably-geocodable neighborhoods.';
 
 -- ============================================
 -- fact_neighborhood_home_values: ZHVI at the neighborhood level
